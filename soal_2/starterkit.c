@@ -14,148 +14,103 @@
 #include <ctype.h>
 #include <locale.h>
 
-#define PID_FILE "decrypt.pid"
+pid_t pid_daemon = -1;
 
-static void write_log(const char *action, const char *filename, int pid);
-static char* base64_decode(const char *input);
-static void daemon_work(void);
-static void start_daemon(void);
-static void stop_daemon(void);
-static void move_files(const char *from, const char *to, const char *action);
-static void delete_all_files(void);
-static int run_program(char *program, char **args);
-static int needs_download(void);
-static void download_starter_kit(void);
-static void create_directory(const char *path);
-static void sanitize_filename(char *filename);
-static pid_t read_pid_file(void);
-static void write_pid_file(pid_t pid);
-
-void sanitize_filename(char *filename) {
-    if (!filename) return;
-    
-    for (char *p = filename; *p; ++p) {
-        if (!isprint((unsigned char)*p)) {
-            *p = '_';
-        }
-    }
-}
-
-void write_log(const char *action, const char *filename, int pid) {
-    setlocale(LC_ALL, "C");
-    time_t now = time(NULL);
-    struct tm *timeinfo = localtime(&now);
+void tulis_log(const char *aksi, const char *nama_file, int pid) {
+    setlocale(LC_TIME, "en_US.UTF-8");
+    time_t sekarang = time(NULL);
+    struct tm *waktu = localtime(&sekarang);
     char timestamp[30];
     
-    strftime(timestamp, sizeof(timestamp), "%d-%m-%Y][%H:%M:%S", timeinfo);
+    strftime(timestamp, sizeof(timestamp), "%d-%m-%Y][%H:%M:%S", waktu);
 
-    FILE *log = fopen("activity.log", "a");
-    if (!log) {
-        perror("Failed to open log file");
+    FILE *log_file = fopen("activity.log", "a");
+    if (log_file == NULL) {
+        perror("Gagal membuka file log");
         return;
     }
 
-    if (strcmp(action, "Decrypt") == 0) {
-        fprintf(log, "Decrypt: [%s] - Successfully started decryption process with PID %d.\n", 
+    if (strcmp(aksi, "Decrypt") == 0) {
+        fprintf(log_file, "Decrypt: [%s] - Successfully started decryption process with PID %d.\n", 
                 timestamp, pid);
-    }
-    else if (strcmp(action, "Shutdown") == 0) {
-        fprintf(log, "Shutdown: [%s] - Successfully shut off decryption process with PID %d.\n", 
-                timestamp, pid);
-    }
-    else if (strcmp(action, "Quarantine") == 0 || 
-             strcmp(action, "Return") == 0 || 
-             strcmp(action, "Eradicate") == 0) {
+    } 
+    else if (strcmp(aksi, "Quarantine") == 0) {
         char clean_name[256] = {0};
-        if (filename) {
-            strncpy(clean_name, filename, sizeof(clean_name)-1);
-            sanitize_filename(clean_name);
+        if (nama_file) {
+            strncpy(clean_name, nama_file, sizeof(clean_name)-1);
+            for (char *p = clean_name; *p; ++p) {
+                if (!isprint((unsigned char)*p)) *p = '\0';
+            }
         }
-        fprintf(log, "%s: [%s] - %s - Successfully %s.\n", 
-                action, timestamp, clean_name,
-                strcmp(action, "Quarantine") == 0 ? "moved to quarantine directory" :
-                strcmp(action, "Return") == 0 ? "returned to starter kit directory" : "deleted");
+        fprintf(log_file, "Quarantine: [%s] - %s - Successfully moved to quarantine directory.\n", 
+                timestamp, clean_name);
+    }
+    else if (strcmp(aksi, "Return") == 0) {
+        char clean_name[256] = {0};
+        if (nama_file) {
+            strncpy(clean_name, nama_file, sizeof(clean_name)-1);
+            for (char *p = clean_name; *p; ++p) {
+                if (!isprint((unsigned char)*p)) *p = '\0';
+            }
+        }
+        fprintf(log_file, "Return: [%s] - %s - Successfully returned to starter kit directory.\n", 
+                timestamp, clean_name);
+    }
+    else if (strcmp(aksi, "Eradicate") == 0) {
+        char clean_name[256] = {0};
+        if (nama_file) {
+            strncpy(clean_name, nama_file, sizeof(clean_name)-1);
+            for (char *p = clean_name; *p; ++p) {
+                if (!isprint((unsigned char)*p)) *p = '\0';
+            }
+        }
+        fprintf(log_file, "Eradicate: [%s] - %s - Successfully deleted.\n", 
+                timestamp, clean_name);
+    }
+    else if (strcmp(aksi, "Shutdown") == 0) {
+        fprintf(log_file, "Shutdown: [%s] - Successfully shut off decryption process with PID %d.\n", 
+                timestamp, pid);
     }
 
-    fflush(log);
-    fclose(log);
+    fflush(log_file);
+    fclose(log_file);
 }
 
-pid_t read_pid_file(void) {
-    FILE *file = fopen(PID_FILE, "r");
-    if (!file) return -1;
-    
-    pid_t pid;
-    if (fscanf(file, "%d", &pid) != 1) {
-        fclose(file);
-        return -1;
-    }
-    
-    fclose(file);
-    return pid;
-}
-
-void write_pid_file(pid_t pid) {
-    FILE *file = fopen(PID_FILE, "w");
-    if (!file) {
-        perror("Failed to write PID file");
-        return;
-    }
-    
-    fprintf(file, "%d", pid);
-    fclose(file);
-}
-
-char* base64_decode(const char *input) {
-    if (!input) return NULL;
-    
+char* dekripsi_base64(const char *input) {
     BIO *bio, *b64;
     char *buffer = malloc(strlen(input) + 1);
-    if (!buffer) return NULL;
+    int panjang = 0;
 
     b64 = BIO_new(BIO_f_base64());
     bio = BIO_new_mem_buf((void*)input, -1);
     bio = BIO_push(b64, bio);
 
     BIO_set_flags(bio, BIO_FLAGS_BASE64_NO_NL);
-    int length = BIO_read(bio, buffer, strlen(input));
-    buffer[length] = '\0';
+    panjang = BIO_read(bio, buffer, strlen(input));
+    buffer[panjang] = '\0';
 
     BIO_free_all(bio);
     return buffer;
 }
 
-void daemon_work(void) {
-    umask(0);
-    setsid();
-    close(STDIN_FILENO);
-    close(STDOUT_FILENO);
-    close(STDERR_FILENO);
-
-    write_pid_file(getpid());
+void proses_daemon() {
+    DIR *dir;
+    struct dirent *ent;
+    char path[1024];
 
     while (1) {
-        DIR *dir = opendir("starter_kit");
-        if (dir) {
-            struct dirent *ent;
+        dir = opendir("starter_kit");
+        if (dir != NULL) {
             while ((ent = readdir(dir)) != NULL) {
                 if (ent->d_type == DT_REG) {
-                    char *decoded_name = base64_decode(ent->d_name);
-                    if (decoded_name) {
-                        char old_path[1024], new_path[1024];
-                        snprintf(old_path, sizeof(old_path), "starter_kit/%s", ent->d_name);
-                        snprintf(new_path, sizeof(new_path), "starter_kit/%s", decoded_name);
-                        
-                        if (rename(old_path, new_path) != 0 && errno != ENOENT) {
-                            // Log error but continue
-                            FILE *log = fopen("activity.log", "a");
-                            if (log) {
-                                fprintf(log, "Error: Failed to rename file %s\n", ent->d_name);
-                                fclose(log);
-                            }
-                        }
-                        free(decoded_name);
-                    }
+                    char *nama_asli = dekripsi_base64(ent->d_name);
+                    char nama_baru[1024];
+
+                    snprintf(path, sizeof(path), "starter_kit/%s", ent->d_name);
+                    snprintf(nama_baru, sizeof(nama_baru), "starter_kit/%s", nama_asli);
+
+                    rename(path, nama_baru);
+                    free(nama_asli);
                 }
             }
             closedir(dir);
@@ -164,101 +119,216 @@ void daemon_work(void) {
     }
 }
 
-void start_daemon(void) {
-    pid_t existing_pid = read_pid_file();
-    if (existing_pid != -1 && kill(existing_pid, 0) == 0) {
-        printf("Decryption process already running with PID %d\n", existing_pid);
-        write_log("Decrypt", NULL, existing_pid);
-        return;
+pid_t cari_pid_daemon() {
+    FILE *pid_file = fopen("decrypt.pid", "r");
+    if (pid_file) {
+        pid_t pid;
+        if (fscanf(pid_file, "%d", &pid) == 1) {
+            fclose(pid_file);
+            char cmdline[256] = {0};
+            char path[256];
+            snprintf(path, sizeof(path), "/proc/%d/cmdline", pid);
+            FILE *cmd = fopen(path, "r");
+            if (cmd) {
+                fread(cmdline, 1, sizeof(cmdline), cmd);
+                fclose(cmd);
+                if (strstr(cmdline, "starterkit")) {
+                    return pid;
+                }
+            }
+        }
+        fclose(pid_file);
     }
 
-    char cmd[256];
-    snprintf(cmd, sizeof(cmd), "pgrep -f 'starterkit --decrypt'");
-    FILE *pgrep = popen(cmd, "r");
-    if (pgrep) {
-        pid_t found_pid;
-        if (fscanf(pgrep, "%d", &found_pid) == 1) {
-            printf("Decryption process already running with PID %d\n", found_pid);
-            write_log("Decrypt", NULL, found_pid);
-            pclose(pgrep);
-            return;
+    DIR *dir = opendir("/proc");
+    if (!dir) return -1;
+
+    struct dirent *ent;
+    while ((ent = readdir(dir)) != NULL) {
+        if (ent->d_type == DT_DIR && isdigit(ent->d_name[0])) {
+            char path[256];
+            char cmdline[256] = {0};
+            snprintf(path, sizeof(path), "/proc/%s/cmdline", ent->d_name);
+            FILE *cmd = fopen(path, "r");
+            if (cmd) {
+                fread(cmdline, 1, sizeof(cmdline), cmd);
+                fclose(cmd);
+                if (strstr(cmdline, "starterkit") && strstr(cmdline, "--decrypt")) {
+                    closedir(dir);
+                    return atoi(ent->d_name);
+                }
+            }
         }
-        pclose(pgrep);
+    }
+    closedir(dir);
+    return -1;
+}
+
+void mulai_daemon() {
+    if (access("decrypt.pid", F_OK) == 0) {
+        FILE *pid_file = fopen("decrypt.pid", "r");
+        if (pid_file) {
+            pid_t old_pid;
+            if (fscanf(pid_file, "%d", &old_pid) == 1) {
+                if (kill(old_pid, 0) == -1 && errno == ESRCH) {
+                    remove("decrypt.pid");
+                }
+            }
+            fclose(pid_file);
+        }
+    }
+
+    pid_t existing_pid = cari_pid_daemon();
+    if (existing_pid != -1) {
+        printf("Proses decrypt sudah berjalan dengan PID %d\n", existing_pid);
+        exit(EXIT_SUCCESS);
     }
 
     pid_t pid = fork();
     if (pid < 0) {
-        perror("Failed to fork daemon process");
+        perror("Gagal membuat daemon");
         exit(EXIT_FAILURE);
     }
 
-    if (pid > 0) { // Parent process
-        write_log("Decrypt", NULL, pid);
-        printf("Decryption process started with PID: %d\n", pid);
-        return;
+    if (pid > 0) { 
+        sleep(1);
+        FILE *pid_file = fopen("decrypt.pid", "r");
+        if (pid_file) {
+            fscanf(pid_file, "%d", &pid);
+            fclose(pid_file);
+        }
+        
+        tulis_log("Decrypt", NULL, pid);
+        printf("Proses decrypt berjalan dengan PID: %d\n", pid);
+        exit(EXIT_SUCCESS);
     }
 
-    daemon_work();
+    umask(0);
+    setsid();
+    close(STDIN_FILENO);
+    close(STDOUT_FILENO);
+    close(STDERR_FILENO);
+
+    FILE *pid_file = fopen("decrypt.pid", "w");
+    if (pid_file) {
+        fprintf(pid_file, "%d", getpid());
+        fclose(pid_file);
+    }
+
+    sync();
+
+    proses_daemon();
 }
 
-void stop_daemon(void) {
-    pid_t pid = read_pid_file();
-    int from_file = 1;
-
-    if (pid == -1) {
-        from_file = 0;
-        char cmd[256];
-        snprintf(cmd, sizeof(cmd), "pgrep -f 'starterkit --decrypt'");
-        FILE *pgrep = popen(cmd, "r");
-        if (pgrep) {
-            if (fscanf(pgrep, "%d", &pid) != 1) {
-                pid = -1;
-            }
-            pclose(pgrep);
-        }
-    }
-
-    if (pid == -1) {
-        printf("No decryption process found\n");
+void hentikan_daemon() {
+    pid_t current_pid = cari_pid_daemon();
+    
+    if (current_pid == -1) {
+        printf("Tidak ada proses decrypt yang berjalan\n");
+        remove("decrypt.pid"); // Clean up if file exists
         return;
     }
 
-    if (kill(pid, SIGTERM) == 0) {
+    printf("Menghentikan proses decrypt dengan PID %d...\n", current_pid);
+    if (kill(current_pid, SIGTERM) == 0) {
         int i;
         for (i = 0; i < 5; i++) {
-            if (kill(pid, 0) == -1 && errno == ESRCH) {
-                break; 
-            }
             sleep(1);
-        }
-
-        if (i < 5) {
-            write_log("Shutdown", NULL, pid);
-            printf("Successfully stopped decryption process (PID %d)\n", pid);
-            if (from_file) {
-                remove(PID_FILE);
+            if (kill(current_pid, 0) == -1 && errno == ESRCH) {
+                tulis_log("Shutdown", NULL, current_pid);
+                printf("Proses decrypt dengan PID %d telah dihentikan\n", current_pid);
+                remove("decrypt.pid");
+                return;
             }
+        }
+        kill(current_pid, SIGKILL);
+        sleep(1);
+        if (kill(current_pid, 0) == -1 && errno == ESRCH) {
+            tulis_log("Shutdown", NULL, current_pid);
+            printf("Proses decrypt dengan PID %d telah dihentikan (paksa)\n", current_pid);
+            remove("decrypt.pid");
         } else {
-            printf("Failed to stop process %d (timeout)\n", pid);
+            printf("Gagal menghentikan proses %d\n", current_pid);
         }
     } else {
-        printf("Process with PID %d not found\n", pid);
-        if (from_file) {
-            remove(PID_FILE);
-        }
+        perror("Gagal menghentikan proses");
     }
 }
 
-void create_directory(const char *path) {
-    if (access(path, F_OK) == -1) {
-        if (mkdir(path, 0755) == -1) {
-            perror("Failed to create directory");
-            exit(EXIT_FAILURE);
+void pindahkan_file(const char *dari, const char *ke, const char *aksi) {
+    DIR *dir;
+    struct dirent *ent;
+    char path_sumber[1024];
+    char path_tujuan[1024];
+
+    dir = opendir(dari);
+    if (dir == NULL) {
+        perror("Gagal membuka direktori");
+        return;
+    }
+
+    while ((ent = readdir(dir)) != NULL) {
+        if (ent->d_type == DT_REG) {
+            snprintf(path_sumber, sizeof(path_sumber), "%s/%s", dari, ent->d_name);
+            snprintf(path_tujuan, sizeof(path_tujuan), "%s/%s", ke, ent->d_name);
+
+            if (rename(path_sumber, path_tujuan) == 0) {
+                tulis_log(aksi, ent->d_name, 0);
+                printf("%s berhasil dipindahkan\n", ent->d_name);
+            } else {
+                perror("Gagal memindahkan file");
+            }
         }
+    }
+
+    closedir(dir);
+}
+
+void hapus_semua_file() {
+    DIR *dir;
+    struct dirent *ent;
+    char path[1024];
+
+    dir = opendir("quarantine");
+    if (dir == NULL) {
+        perror("Gagal membuka direktori karantina");
+        return;
+    }
+
+    while ((ent = readdir(dir)) != NULL) {
+        if (ent->d_type == DT_REG) {
+            snprintf(path, sizeof(path), "quarantine/%s", ent->d_name);
+
+            if (remove(path) == 0) {
+                tulis_log("Eradicate", ent->d_name, 0);
+                printf("%s berhasil dihapus\n", ent->d_name);
+            } else {
+                perror("Gagal menghapus file");
+            }
+        }
+    }
+
+    closedir(dir);
+}
+
+int jalankan_program(char *program, char **args) {
+    pid_t pid = fork();
+
+    if (pid < 0) {
+        perror("Gagal membuat proses");
+        return -1;
+    } else if (pid == 0) {
+        execvp(program, args);
+        perror("Gagal menjalankan program");
+        exit(EXIT_FAILURE);
+    } else {
+        int status;
+        waitpid(pid, &status, 0);
+        return WEXITSTATUS(status);
     }
 }
 
-int needs_download(void) {
+int perlu_download() {
     DIR *dir = opendir("starter_kit");
     if (dir == NULL) return 1;
 
@@ -275,142 +345,77 @@ int needs_download(void) {
     return count == 0;
 }
 
-int run_program(char *program, char **args) {
-    pid_t pid = fork();
-
-    if (pid < 0) {
-        perror("Failed to create process");
-        return -1;
-    } else if (pid == 0) {
-        execvp(program, args);
-        perror("Failed to execute program");
-        exit(EXIT_FAILURE);
-    } else {
-        int status;
-        waitpid(pid, &status, 0);
-        return WEXITSTATUS(status);
-    }
-}
-
-void download_starter_kit(void) {
-    if (!needs_download()) {
-        printf("Starter kit already exists, skipping download\n");
+void unduh_starter_kit() {
+    if (!perlu_download()) {
+        printf("Starter kit sudah ada, skip download\n");
         return;
     }
 
-    create_directory("starter_kit");
-    create_directory("quarantine");
+    if (access("starter_kit", F_OK) == -1) {
+        mkdir("starter_kit", 0755);
+    }
 
-    printf("Downloading starter kit...\n");
-    char *wget_args[] = {
-        "wget", "--no-check-certificate",
-        "https://drive.google.com/uc?export=download&id=1_5GxIGfQr3mNKuavJbte_AoRkEQLXSKS",
-        "-O", "starter_kit.zip", NULL
-    };
+    if (access("quarantine", F_OK) == -1) {
+        mkdir("quarantine", 0755);
+    }
 
-    if (run_program("wget", wget_args) == 0) {
-        char *unzip_args[] = {
-            "unzip", "-o", "starter_kit.zip", "-d", "starter_kit", NULL
-        };
-        if (run_program("unzip", unzip_args) == 0) {
-            printf("Starter kit downloaded and extracted successfully\n");
+    printf("Mengunduh starter kit...\n");
+    char *wget_args[] = {"wget", "--no-check-certificate",
+                         "https://drive.google.com/uc?export=download&id=1_5GxIGfQr3mNKuavJbte_AoRkEQLXSKS",
+                         "-O", "starter_kit.zip", NULL};
+
+    if (jalankan_program("wget", wget_args) == 0) {
+        char *unzip_args[] = {"unzip", "-o", "starter_kit.zip", "-d", "starter_kit", NULL};
+        if (jalankan_program("unzip", unzip_args) == 0) {
+            printf("Starter kit berhasil diunduh dan diekstrak\n");
             remove("starter_kit.zip");
         } else {
-            printf("Failed to extract starter kit\n");
+            printf("Gagal mengekstrak starter kit\n");
         }
     } else {
-        printf("Failed to download starter kit\n");
+        printf("Gagal mengunduh starter kit\n");
     }
-}
-
-void move_files(const char *from, const char *to, const char *action) {
-    DIR *dir;
-    struct dirent *ent;
-    char src_path[1024];
-    char dst_path[1024];
-
-    dir = opendir(from);
-    if (dir == NULL) {
-        perror("Failed to open directory");
-        return;
-    }
-
-    while ((ent = readdir(dir)) != NULL) {
-        if (ent->d_type == DT_REG) {
-            snprintf(src_path, sizeof(src_path), "%s/%s", from, ent->d_name);
-            snprintf(dst_path, sizeof(dst_path), "%s/%s", to, ent->d_name);
-
-            if (rename(src_path, dst_path) == 0) {
-                write_log(action, ent->d_name, 0);
-                printf("%s successfully %s\n", ent->d_name, 
-                       strcmp(action, "Quarantine") == 0 ? "quarantined" : "returned");
-            } else {
-                perror("Failed to move file");
-            }
-        }
-    }
-
-    closedir(dir);
-}
-
-void delete_all_files(void) {
-    DIR *dir;
-    struct dirent *ent;
-    char path[1024];
-
-    dir = opendir("quarantine");
-    if (dir == NULL) {
-        perror("Failed to open quarantine directory");
-        return;
-    }
-
-    while ((ent = readdir(dir)) != NULL) {
-        if (ent->d_type == DT_REG) {
-            snprintf(path, sizeof(path), "quarantine/%s", ent->d_name);
-
-            if (remove(path) == 0) {
-                write_log("Eradicate", ent->d_name, 0);
-                printf("%s successfully deleted\n", ent->d_name);
-            } else {
-                perror("Failed to delete file");
-            }
-        }
-    }
-
-    closedir(dir);
 }
 
 int main(int argc, char *argv[]) {
-    setlocale(LC_ALL, "C");
-
     if (argc != 2) {
-        printf("Usage: %s [--decrypt|--quarantine|--return|--eradicate|--shutdown]\n", argv[0]);
+        printf("Penggunaan: %s [--decrypt|--quarantine|--return|--eradicate|--shutdown]\n", argv[0]);
         return EXIT_FAILURE;
     }
 
+    if (access("decrypt.pid", F_OK) == 0) {
+        FILE *pid_file = fopen("decrypt.pid", "r");
+        if (pid_file) {
+            pid_t old_pid;
+            if (fscanf(pid_file, "%d", &old_pid) == 1) {
+                if (kill(old_pid, 0) == -1 && errno == ESRCH) {
+                    remove("decrypt.pid");
+                }
+            }
+            fclose(pid_file);
+        }
+    }
+
     if (strcmp(argv[1], "--return") != 0) {
-        download_starter_kit();
+        unduh_starter_kit();
     } else {
-        create_directory("quarantine");
+        if (access("quarantine", F_OK) == -1) {
+            mkdir("quarantine", 0755);
+        }
     }
 
     if (strcmp(argv[1], "--decrypt") == 0) {
-        start_daemon();
-    } 
-    else if (strcmp(argv[1], "--quarantine") == 0) {
-        move_files("starter_kit", "quarantine", "Quarantine");
-    }
-    else if (strcmp(argv[1], "--return") == 0) {
-        move_files("quarantine", "starter_kit", "Return");
-    }
-    else if (strcmp(argv[1], "--eradicate") == 0) {
-        delete_all_files();
-    }
-    else if (strcmp(argv[1], "--shutdown") == 0) {
-        stop_daemon();
-    }
-    else {
-        printf("Unknown argument: %s\n", argv[1]);
+        mulai_daemon();
+    } else if (strcmp(argv[1], "--quarantine") == 0) {
+        pindahkan_file("starter_kit", "quarantine", "Quarantine");
+    } else if (strcmp(argv[1], "--return") == 0) {
+        pindahkan_file("quarantine", "starter_kit", "Return");
+    } else if (strcmp(argv[1], "--eradicate") == 0) {
+        hapus_semua_file();
+    } else if (strcmp(argv[1], "--shutdown") == 0) {
+        hentikan_daemon();
+    } else {
+        printf("Argumen tidak dikenal: %s\n", argv[1]);
         return EXIT_FAILURE;
     }
 
