@@ -14,10 +14,8 @@
 #include <ctype.h>
 #include <locale.h>
 
-static pid_t daemon_pid = -1;
-static int pid_logged = 0;
+#define PID_FILE "decrypt.pid"
 
-static pid_t find_daemon_process(void);
 static void write_log(const char *action, const char *filename, int pid);
 static char* base64_decode(const char *input);
 static void daemon_work(void);
@@ -30,6 +28,8 @@ static int needs_download(void);
 static void download_starter_kit(void);
 static void create_directory(const char *path);
 static void sanitize_filename(char *filename);
+static pid_t read_pid_file(void);
+static void write_pid_file(pid_t pid);
 
 void sanitize_filename(char *filename) {
     if (!filename) return;
@@ -45,7 +45,7 @@ void write_log(const char *action, const char *filename, int pid) {
     setlocale(LC_ALL, "C");
     time_t now = time(NULL);
     struct tm *timeinfo = localtime(&now);
-    char timestamp[20];
+    char timestamp[30];
     
     strftime(timestamp, sizeof(timestamp), "%d-%m-%Y][%H:%M:%S", timeinfo);
 
@@ -56,17 +56,12 @@ void write_log(const char *action, const char *filename, int pid) {
     }
 
     if (strcmp(action, "Decrypt") == 0) {
-        if (!pid_logged || daemon_pid != pid) {
-            fprintf(log, "Decrypt: [%s] - Successfully started decryption process with PID %d.\n", 
-                    timestamp, pid);
-            daemon_pid = pid;
-            pid_logged = 1;
-        }
+        fprintf(log, "Decrypt: [%s] - Successfully started decryption process with PID %d.\n", 
+                timestamp, pid);
     }
     else if (strcmp(action, "Shutdown") == 0) {
         fprintf(log, "Shutdown: [%s] - Successfully shut off decryption process with PID %d.\n", 
                 timestamp, pid);
-        pid_logged = 0;
     }
     else if (strcmp(action, "Quarantine") == 0 || 
              strcmp(action, "Return") == 0 || 
@@ -86,32 +81,44 @@ void write_log(const char *action, const char *filename, int pid) {
     fclose(log);
 }
 
-pid_t find_daemon_process(void) {
-    char cmd[256];
-    snprintf(cmd, sizeof(cmd), "pgrep -f 'starterkit --decrypt'");
-    FILE *pgrep = popen(cmd, "r");
-    if (!pgrep) return -1;
-
-    pid_t found_pid = -1;
-    if (fscanf(pgrep, "%d", &found_pid) != 1) {
-        found_pid = -1;
+pid_t read_pid_file(void) {
+    FILE *file = fopen(PID_FILE, "r");
+    if (!file) return -1;
+    
+    pid_t pid;
+    if (fscanf(file, "%d", &pid) != 1) {
+        fclose(file);
+        return -1;
     }
-    pclose(pgrep);
+    
+    fclose(file);
+    return pid;
+}
 
-    return found_pid;
+void write_pid_file(pid_t pid) {
+    FILE *file = fopen(PID_FILE, "w");
+    if (!file) {
+        perror("Failed to write PID file");
+        return;
+    }
+    
+    fprintf(file, "%d", pid);
+    fclose(file);
 }
 
 char* base64_decode(const char *input) {
+    if (!input) return NULL;
+    
     BIO *bio, *b64;
     char *buffer = malloc(strlen(input) + 1);
-    int length = 0;
+    if (!buffer) return NULL;
 
     b64 = BIO_new(BIO_f_base64());
     bio = BIO_new_mem_buf((void*)input, -1);
     bio = BIO_push(b64, bio);
 
     BIO_set_flags(bio, BIO_FLAGS_BASE64_NO_NL);
-    length = BIO_read(bio, buffer, strlen(input));
+    int length = BIO_read(bio, buffer, strlen(input));
     buffer[length] = '\0';
 
     BIO_free_all(bio);
@@ -119,25 +126,36 @@ char* base64_decode(const char *input) {
 }
 
 void daemon_work(void) {
-    DIR *dir;
-    struct dirent *ent;
-    char path[1024];
+    umask(0);
+    setsid();
+    close(STDIN_FILENO);
+    close(STDOUT_FILENO);
+    close(STDERR_FILENO);
+
+    write_pid_file(getpid());
 
     while (1) {
-        dir = opendir("starter_kit");
+        DIR *dir = opendir("starter_kit");
         if (dir) {
+            struct dirent *ent;
             while ((ent = readdir(dir)) != NULL) {
                 if (ent->d_type == DT_REG) {
                     char *decoded_name = base64_decode(ent->d_name);
-                    char new_path[1024];
-
-                    snprintf(path, sizeof(path), "starter_kit/%s", ent->d_name);
-                    snprintf(new_path, sizeof(new_path), "starter_kit/%s", decoded_name);
-
-                    if (rename(path, new_path) != 0) {
-                        perror("Failed to rename file");
+                    if (decoded_name) {
+                        char old_path[1024], new_path[1024];
+                        snprintf(old_path, sizeof(old_path), "starter_kit/%s", ent->d_name);
+                        snprintf(new_path, sizeof(new_path), "starter_kit/%s", decoded_name);
+                        
+                        if (rename(old_path, new_path) != 0 && errno != ENOENT) {
+                            // Log error but continue
+                            FILE *log = fopen("activity.log", "a");
+                            if (log) {
+                                fprintf(log, "Error: Failed to rename file %s\n", ent->d_name);
+                                fclose(log);
+                            }
+                        }
+                        free(decoded_name);
                     }
-                    free(decoded_name);
                 }
             }
             closedir(dir);
@@ -147,11 +165,25 @@ void daemon_work(void) {
 }
 
 void start_daemon(void) {
-    pid_t existing_pid = find_daemon_process();
-    if (existing_pid != -1) {
+    pid_t existing_pid = read_pid_file();
+    if (existing_pid != -1 && kill(existing_pid, 0) == 0) {
         printf("Decryption process already running with PID %d\n", existing_pid);
         write_log("Decrypt", NULL, existing_pid);
-        exit(EXIT_SUCCESS);
+        return;
+    }
+
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "pgrep -f 'starterkit --decrypt'");
+    FILE *pgrep = popen(cmd, "r");
+    if (pgrep) {
+        pid_t found_pid;
+        if (fscanf(pgrep, "%d", &found_pid) == 1) {
+            printf("Decryption process already running with PID %d\n", found_pid);
+            write_log("Decrypt", NULL, found_pid);
+            pclose(pgrep);
+            return;
+        }
+        pclose(pgrep);
     }
 
     pid_t pid = fork();
@@ -160,43 +192,59 @@ void start_daemon(void) {
         exit(EXIT_FAILURE);
     }
 
-    if (pid > 0) {
+    if (pid > 0) { // Parent process
         write_log("Decrypt", NULL, pid);
         printf("Decryption process started with PID: %d\n", pid);
-        exit(EXIT_SUCCESS);
+        return;
     }
 
-    umask(0);
-    setsid();
-    close(STDIN_FILENO);
-    close(STDOUT_FILENO);
-    close(STDERR_FILENO);
-
-    daemon_work(); 
+    daemon_work();
 }
 
 void stop_daemon(void) {
-    pid_t pid = find_daemon_process();
+    pid_t pid = read_pid_file();
+    int from_file = 1;
+
+    if (pid == -1) {
+        from_file = 0;
+        char cmd[256];
+        snprintf(cmd, sizeof(cmd), "pgrep -f 'starterkit --decrypt'");
+        FILE *pgrep = popen(cmd, "r");
+        if (pgrep) {
+            if (fscanf(pgrep, "%d", &pid) != 1) {
+                pid = -1;
+            }
+            pclose(pgrep);
+        }
+    }
+
     if (pid == -1) {
         printf("No decryption process found\n");
         return;
     }
 
     if (kill(pid, SIGTERM) == 0) {
-        for (int i = 0; i < 5; i++) {
-            sleep(1);
+        int i;
+        for (i = 0; i < 5; i++) {
             if (kill(pid, 0) == -1 && errno == ESRCH) {
-                write_log("Shutdown", NULL, pid);
-                printf("Successfully stopped decryption process (PID %d)\n", pid);
-                return;
+                break; 
             }
+            sleep(1);
         }
-        printf("Failed to stop process %d (timeout)\n", pid);
-    } else {
-        if (errno == ESRCH) {
-            printf("Process with PID %d not found\n", pid);
+
+        if (i < 5) {
+            write_log("Shutdown", NULL, pid);
+            printf("Successfully stopped decryption process (PID %d)\n", pid);
+            if (from_file) {
+                remove(PID_FILE);
+            }
         } else {
-            perror("Failed to stop process");
+            printf("Failed to stop process %d (timeout)\n", pid);
+        }
+    } else {
+        printf("Process with PID %d not found\n", pid);
+        if (from_file) {
+            remove(PID_FILE);
         }
     }
 }
