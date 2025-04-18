@@ -35,7 +35,7 @@ void tulis_log(const char *aksi, const char *nama_file, int pid) {
                 timestamp, pid);
     } 
     else if (strcmp(aksi, "Quarantine") == 0) {
-        char clean_name[256] = {0};
+        char clean_name[512] = {0};
         if (nama_file) {
             strncpy(clean_name, nama_file, sizeof(clean_name)-1);
             for (char *p = clean_name; *p; ++p) {
@@ -46,7 +46,7 @@ void tulis_log(const char *aksi, const char *nama_file, int pid) {
                 timestamp, clean_name);
     }
     else if (strcmp(aksi, "Return") == 0) {
-        char clean_name[256] = {0};
+        char clean_name[512] = {0};
         if (nama_file) {
             strncpy(clean_name, nama_file, sizeof(clean_name)-1);
             for (char *p = clean_name; *p; ++p) {
@@ -57,7 +57,7 @@ void tulis_log(const char *aksi, const char *nama_file, int pid) {
                 timestamp, clean_name);
     }
     else if (strcmp(aksi, "Eradicate") == 0) {
-        char clean_name[256] = {0};
+        char clean_name[512] = {0};
         if (nama_file) {
             strncpy(clean_name, nama_file, sizeof(clean_name)-1);
             for (char *p = clean_name; *p; ++p) {
@@ -125,8 +125,8 @@ pid_t cari_pid_daemon() {
         pid_t pid;
         if (fscanf(pid_file, "%d", &pid) == 1) {
             fclose(pid_file);
-            char cmdline[256] = {0};
-            char path[256];
+            char cmdline[512] = {0};
+            char path[512];
             snprintf(path, sizeof(path), "/proc/%d/cmdline", pid);
             FILE *cmd = fopen(path, "r");
             if (cmd) {
@@ -146,8 +146,8 @@ pid_t cari_pid_daemon() {
     struct dirent *ent;
     while ((ent = readdir(dir)) != NULL) {
         if (ent->d_type == DT_DIR && isdigit(ent->d_name[0])) {
-            char path[256];
-            char cmdline[256] = {0};
+            char path[512];
+            char cmdline[512] = {0};
             snprintf(path, sizeof(path), "/proc/%s/cmdline", ent->d_name);
             FILE *cmd = fopen(path, "r");
             if (cmd) {
@@ -225,7 +225,7 @@ void hentikan_daemon() {
     
     if (current_pid == -1) {
         printf("Tidak ada proses decrypt yang berjalan\n");
-        remove("decrypt.pid"); // Clean up if file exists
+        remove("decrypt.pid");
         return;
     }
 
