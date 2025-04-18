@@ -16,7 +16,7 @@
 - S_ISDIR() mengecek apakah itu folder.
 
 ![image](https://github.com/user-attachments/assets/30778217-303f-48b8-85dd-36154b769b84)
-Callback yang dipakai CURL untuk menulis data hasil download ke file.
+- Callback yang dipakai CURL untuk menulis data hasil download ke file.
 
 ![image](https://github.com/user-attachments/assets/64323710-7266-4126-b3c6-5fec908900cb)
 - Menggunakan libcurl untuk mendownload ZIP dari url dan menyimpannya sebagai out.
@@ -41,10 +41,10 @@ Callback yang dipakai CURL untuk menulis data hasil download ke file.
 - Diikuti ".txt"
 
 ![image](https://github.com/user-attachments/assets/251c5ed7-43c1-4e58-a894-956ba3fc39d5)
-Mengecek apakah file diawali digit/huruf dan berakhiran .txt
+- Mengecek apakah file diawali digit/huruf dan berakhiran .txt
 
 ![image](https://github.com/user-attachments/assets/ba16ca4c-049e-45fb-aaca-8a7abeff4f20)
-Fungsi pembanding string untuk qsort
+- Fungsi pembanding string untuk qsort
 
 ![image](https://github.com/user-attachments/assets/7602aca6-d7e2-4c8f-a366-fed13d234113)
 ![image](https://github.com/user-attachments/assets/7822b37e-13f8-49ae-bab6-968ae414908c)
