@@ -535,15 +535,37 @@ Cara Jalannya:
 ```c
 gcc program.c -o program
 ```
+![image](https://github.com/user-attachments/assets/c13ed983-e870-4b54-b615-7aca0f335f06)
+
 
 Jalankan pakai:
 ```c
 ./program --decrypt
+```
+![image](https://github.com/user-attachments/assets/17590ead-203d-4878-8021-0801f1dac98b)
+
+```c
 ./program --quarantine
+```
+![image](https://github.com/user-attachments/assets/3b2a1a87-a22d-497d-ae5a-8febb995c491)
+
+```c
 ./program --return
+```
+![image](https://github.com/user-attachments/assets/872f97c0-ad27-4abf-8211-ec71b75396c7)
+
+```c
 ./program --eradicate
+```
+![image](https://github.com/user-attachments/assets/40a41d82-bf2a-4e30-b7a8-8d9adee00a84)
+
+
+```c
 ./program --shutdown
 ```
+![image](https://github.com/user-attachments/assets/3d1d85db-1994-40f4-85f7-faed5e6ea3f1)
+
+
 ### Revisi
 
 Mengubah semua isi array yang awalnya 256 menjadi 512
