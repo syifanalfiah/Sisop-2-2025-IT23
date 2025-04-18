@@ -519,12 +519,12 @@ if (strcmp(argv[1], "--decrypt") == 0) {
 }
 ```
 Argumen	Fungsi yang dijalankan	Keterangan Singkat
---decrypt	mulai_daemon()	Menjalankan proses latar (decrypt)
---quarantine	pindahkan_file(starter_kit → quarantine)	Memindahkan semua file ke folder quarantine
---return	pindahkan_file(quarantine → starter_kit)	Balikin file dari quarantine
---eradicate	hapus_semua_file()	Menghapus semua file (eradikasi)
---shutdown	hentikan_daemon()	Mematikan proses daemon decrypt
-lainnya	Error: argumen tidak dikenal	Tampilkan pesan error
+1. --decrypt	mulai_daemon()	Menjalankan proses latar (decrypt)
+2. --quarantine	pindahkan_file(starter_kit → quarantine)	Memindahkan semua file ke folder quarantine
+3. --return	pindahkan_file(quarantine → starter_kit)	Balikin file dari quarantine
+4. --eradicate	hapus_semua_file()	Menghapus semua file (eradikasi)
+5. --shutdown	hentikan_daemon()	Mematikan proses daemon decrypt
+6. lainnya	Error: argumen tidak dikenal	Tampilkan pesan error
 
 5. Return sukses:
 ```c
@@ -569,7 +569,7 @@ Jalankan pakai:
 ### Revisi
 
 Mengubah semua isi array yang awalnya 256 menjadi 512
-Contoh:
+- Contoh:
 ```c
 char clean_name[256] = {0};
 ```
